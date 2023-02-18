@@ -3,23 +3,9 @@ from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 from urllib.request import urlopen, Request
 from transformers import pipeline
-import requests, os
-
-API_URL = "https://api-inference.huggingface.co/models/mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis"
-headers = {"Authorization": f"Bearer {os.environ['huggingface']}"}
-
-def query(payload):
-	response = requests.post(API_URL, headers=headers, json=payload)
-	return response.json()
-	
-output = query({
-	"inputs": "I like you. I love you",
-})
-# Parameters 
-n = 3 #the # of article headlines displayed per ticker
+n = 50
 tickers = ['AAPL']
 
-# Get Data
 finwiz_url = 'https://finviz.com/quote.ashx?t='
 news_tables = {}
 
@@ -31,7 +17,6 @@ for ticker in tickers:
     news_table = html.find(id='news-table')
     news_tables[ticker] = news_table
 
-# Iterate through the news
 parsed_news = []
 for file_name, news_table in news_tables.items():
     for x in news_table.findAll('tr'):
@@ -48,45 +33,52 @@ for file_name, news_table in news_tables.items():
         ticker = file_name.split('_')[0]
         
         parsed_news.append([ticker, date, time, text])
-        
-# Sentiment Analysis
+
+   
 analyzer = pipeline("sentiment-analysis", model="mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
 
 columns = ['Ticker', 'Date', 'Time', 'Headline']
 news = pd.DataFrame(parsed_news, columns=columns)
-scores1 = news['Headline'].apply(analyzer).tolist()
-scores2 = []
-for score in scores1:
+
+scores = []   
+for i, headline in enumerate(news['Headline']):
+    print(f"\nAnalysing {i+1}/{news['Headline'].count()} {round((i+1)/news['Headline'].count(),3)*100}%")
+    score = analyzer(headline)#{"label":""}]
     if score[0]["label"] == "positive":
-        scores2.append(score[0]["score"])
-    if score[0]["label"] == "negative":
-        scores2.append(-score[0]["score"])
-    if score[0]["label"] == "neutral":
-        scores2.append(0)
+        scores.append(score[0]["score"])
+        print(f"{headline}")
+        print(score[0]["score"])
+    elif score[0]["label"] == "negative":
+        scores.append(-score[0]["score"])
+        print(f"{headline}")
+        print(-score[0]["score"])
+    elif score[0]["label"] == "neutral":
+        scores.append(0)
+        print(f"{headline}")
+        print(0)
+    if i == n*len(tickers):
+        break
+        
+df_scores = pd.DataFrame(scores)
 
-df_scores = pd.DataFrame(scores2)
 news = news.join(df_scores, rsuffix='_right')
-
 # View Data 
 news['Date'] = pd.to_datetime(news.Date).dt.date
-
 unique_ticker = news['Ticker'].unique().tolist()
 news_dict = {name: news.loc[news['Ticker'] == name] for name in unique_ticker}
-
 values = []
+
 for ticker in tickers: 
     dataframe = news_dict[ticker]
     dataframe = dataframe.set_index('Ticker')
-    print (dataframe)
-    dataframe = dataframe.drop(columns = ['Headline'])
-    print ('\n')
-    print (dataframe.head(30))
-    
-    mean = round(dataframe[0].mean(), 2)
+    dataframe = dataframe.rename(columns={0:"Score"})
+    print (dataframe.head())
+    dataframe = dataframe.drop(dataframe[dataframe["Score"] == 0].index)
+    print (dataframe.head())
+    mean = round(dataframe["Score"].mean(), 2)
     values.append(mean)
     
 df = pd.DataFrame(list(zip(tickers, values)), columns =['Ticker', 'Mean Sentiment']) 
 df = df.set_index('Ticker')
 df = df.sort_values('Mean Sentiment', ascending=False)
-print ('\n')
 print (df)
